@@ -1,0 +1,506 @@
+
+<link rel="stylesheet" href="https://js.arcgis.com/4.24/esri/themes/light/main.css">
+<script src="https://js.arcgis.com/4.24/"></script>
+<div id="map-div" style="min-height: 400px; width: auto"></div>
+
+<script>
+    require(["esri/config",
+        "esri/Map",
+        "esri/views/MapView",
+        "esri/widgets/Locate",
+        "esri/widgets/Search",
+        "esri/widgets/Search/SearchViewModel",
+        "esri/layers/FeatureLayer",
+        "esri/Graphic"
+    ], function (esriConfig,
+        Map,
+        MapView,
+        Locate,
+        Search,
+        SearchViewModel,
+        FeatureLayer,
+        Graphic
+    ) {
+        esriConfig.apiKey = "AAPK8b2ce96b69e444f9a0c9b38b358f04b9bivwZBFW4IQqydIo2KdGsN0eXa9JEWxVF1HKv-O8D7CmONh-N7uZbPICvtZIoQtF";
+        map = new Map({
+            basemap: "topo-vector"
+        });
+//34.10469626010669, -117.60648042520876
+        const view = new MapView({
+            map: map,
+            center: [-117.60648042520876,34.1046962601066], // Longitude, latitude
+            zoom: 11,
+            container: "map-div"
+        });
+
+        //GIVEN LINK: https://gisdata.pima.gov/arcgis1/rest/services/GISOpenData/Addresses/MapServer/9/
+		/* LAYER DEFINITIONS */
+		const addressLayer = new FeatureLayer({
+			title: "Address Layer",
+			url: "https://gis.cityofrc.us/arcgis/rest/services/Accela/InternalBasemap/MapServer/0",
+			outFields: ["*"],
+			minScale: 10000,
+			renderer: {
+				type: "simple",
+				symbol: {
+					type: "simple-marker",
+					style: "circle",
+					color: [0, 120, 200, 0.6],
+					size: 8,
+					outline: {
+						color: [255, 255, 255, 1],
+						width: 1
+					}
+				}
+			},
+			labelingInfo: [{
+				labelExpressionInfo: {
+					expression: "$feature.LABEL"
+				},
+				symbol: {
+					type: "text",
+					color: "black",
+					haloColor: "white",
+					haloSize: "1px",
+					font: {
+						size: 10,
+						family: "Arial",
+						weight: "bold"
+					}
+				},
+				labelPlacement: "center-center"
+			}]
+		});
+
+		map.add(addressLayer);
+		
+        const addressLayerAPNAttrName = "APN";
+        const addressLayerAddressAttrName = "Label";
+
+        const parcelLayer = new FeatureLayer({
+            title: "Parcel Layer",
+            url: "https://gis.cityofrc.us/arcgis/rest/services/Accela/InternalBasemap/MapServer/2",
+            outFields: ["*"],
+            minScale: 10000,
+            renderer: {
+                type: "simple",
+                symbol: {
+                    type: "simple-line",
+                    color: "#424242",
+                    size: .4,
+                }
+            }
+        });
+        map.add(parcelLayer);
+        const parcelLayerAPNAttrName = "APN";
+
+        //TEST
+        
+        const fireHazardLayer = new FeatureLayer({
+            title: "Parcel Layer",
+            url: "https://gis.cityofrc.us/arcgis/rest/services/Accela/InternalBasemap/MapServer/11",
+            outFields: ["*"],
+            minScale: 10000,
+        });
+        map.add(fireHazardLayer);
+
+        const LMDlayer = new FeatureLayer({
+            title: "Parcel Layer",
+            url: "https://gis.cityofrc.us/arcgis/rest/services/Accela/InternalBasemap/MapServer/26",
+            outFields: ["*"],
+            minScale: 10000,
+        });
+        //TEST END
+        /* LOCATE MODULE */
+        // const locate = new Locate({
+        //     view: view,
+        // });
+        // view.ui.add(locate, "top-left");
+
+
+        /* SEARCH MODULE */
+        const search = new Search({
+            view: view,
+            includeDefaultSources: false,
+            locationEnabled: false,
+            viewModel: new SearchViewModel({
+                includeDefaultSources: false,
+                maxSuggestions: 15,
+                minSuggestCharacters: 2
+            }),
+            sources: [
+                {
+                    layer: addressLayer,
+                    searchFields: [addressLayerAddressAttrName],
+                    suggestionTemplate: `{${addressLayerAddressAttrName}}`,
+                    outFields: addressLayer.outFields,
+                    exactMatch: false,
+                    name: "Address",
+                    placeholder: "e.g. 123 Main St",
+                },
+                {
+                    layer: parcelLayer,
+                    searchFields: [parcelLayerAPNAttrName],
+                    suggestionTemplate: `{${parcelLayerAPNAttrName}}`,
+                    outFields: parcelLayer.outFields,
+                    exactMatch: false,
+                    name: "Parcel",
+                    placeholder: "e.g. 57605450",
+                },
+            ]
+        });
+        view.ui.add(search, "top-right");
+        search.viewModel._onSearchFocus = function() {
+    // Prevent location services from being triggered
+    return;
+    };
+
+        /* HANDLE MAP CLICK EVENT */
+        view.on("click", async function (event) {
+            var parcelResults = await parcelLayer.queryFeatures({
+                geometry: event.mapPoint,
+                spatialRelationship: "intersects",
+                outFields: parcelLayer.outFields,
+                returnGeometry: true,
+            });
+            console.log(parcelResults);
+            if (parcelResults.features.length == 0) {
+                handleInvalidSelection(event.mapPoint);
+                return;
+            } else if (parcelResults.features.length > 1) {
+                console.log("WARNING: Multiple Parcels Found at Click Location");
+            }
+            // console.dir(parcelResults.features[0].attributes);
+            const attributes = parcelResults.features[0].attributes;
+            if (attributes[parcelLayerAPNAttrName] == null) {
+                console.log("WARNING: Possible Confidential Owner");
+                handleConfidentialOwner(attributes, event.mapPoint);
+                return;
+            }
+            await selectAddressByAPN(attributes, event.mapPoint);
+            forcePopupExpansion();
+        });
+
+
+        /* HANDLE SEARCH-BAR SELECTION EVENT */
+        search.on("select-result", async function (event) {
+            // console.log("Search Result Selected");
+            const source = event.sourceIndex;
+            const attributes = event.result.feature.attributes;
+            const geometry = event.result.feature.geometry;
+            if (source == 0) {
+                // Address Layer Selected
+                await handleValidSelection(attributes, geometry);
+
+            } else if (source == 1) {
+                // Parcel Layer Selected
+                // console.log(attributes, geometry);
+                // await selectAddressByAPN(attributes, geometry.centroid);
+                // await selectAddressByAPN(attributes, geometry);
+                await handleValidSelection(attributes, geometry);
+
+
+            }
+            forcePopupExpansion();
+        });
+
+
+        /* GET ADDRESS FROM APN */
+        async function selectAddressByAPN(parcelLayerAttributes, mapPoint) {
+            view.goTo({
+                target: mapPoint,
+                zoom: 18,
+                duration: 1000,
+                easing: "ease-in-out"
+            });
+            const apn = parcelLayerAttributes[parcelLayerAPNAttrName];
+            console.log(`Selecting Address by APN: ${apn}`);
+            const addresses = await addressLayer.queryFeatures({
+                where: `${addressLayerAPNAttrName} = '${apn}'`,
+                outFields: addressLayer.outFields,
+                returnGeometry: true,
+            });
+
+            if (!addresses.features.length) {
+                console.log("No Addresses Found at Location");
+                handleValidParcelSelection(parcelLayerAttributes, mapPoint);
+            } else if (addresses.features.length == 1) {
+                console.log("Single Address Found at Location");
+                await handleValidSelection(addresses.features[0].attributes, mapPoint);
+            } else {
+                console.log("Multiple Addresses Found at Location");
+                let addressGraphics = [];
+                addresses.features.forEach(function (feature, index) {
+                    // Customizable layer variables
+                    const ADDRESS = feature.attributes[addressLayerAddressAttrName];
+                    const APN = feature.attributes[addressLayerAPNAttrName];
+
+                    let addressGraphic = new Graphic({
+                        geometry: mapPoint,
+                        attributes: feature.attributes,
+                        popupTemplate: {
+                            title: ADDRESS,
+                            content: `Multiple addresses found for parcel number ${APN}. Please select the correct address.`,
+                            actions: [{
+                                title: "Select Address",
+                                id: "select-address",
+                                className: "esri-icon-check-mark"
+                            }]
+                        }
+                    });
+                    addressGraphics.push(addressGraphic);
+                });
+
+                view.popup.open({
+                    features: addressGraphics,
+                    location: mapPoint
+                });
+            }
+        }
+
+
+        /* HANDLE USER SELECTED ADDRESS FROM APN */
+        view.popup.on("trigger-action", async function (event) {
+            if (event.action.id === "select-address") {
+                // Get the currently selected feature from the popup
+                const selectedFeature = view.popup.selectedFeature;
+                const attributes = selectedFeature.attributes;
+                const geometry = selectedFeature.geometry;
+                await handleValidSelection(attributes, geometry);
+            }
+        });
+
+
+        /* UTILITY FUNCTIONS */
+        async function queryLayersByLocation(geometry) {
+            console.log("Querying Layers by Location");
+            const layers = {
+                // "https://gis.cityofrc.us/arcgis/rest/services/Accela/InternalBasemap/MapServer/11": ["HAZ_CLASS"],
+                "https://gis.cityofrc.us/arcgis/rest/services/Accela/InternalBasemap/MapServer/26": ["Zone"]
+            }
+
+            const newAttributes = {};
+            for (const [url, fields] of Object.entries(layers)) {
+                const layer = new FeatureLayer({
+                    url: url,
+                    outFields: fields,
+                });
+                const result = await layer.queryFeatures({
+                    geometry: geometry,
+                    spatialRelationship: "intersects",
+                    outFields: fields,
+                    returnGeometry: true,
+                });
+                console.log('**Debug MBBGB** : ' + result);
+                if (!result.features.length) {
+                    console.log(`No features found in layer: ${url}`);
+                    continue;
+                }
+                const firstFeature = result.features[0];
+                const layerId = firstFeature.layer.layerId;
+                for (let i in firstFeature.attributes) {
+                    newAttributes[`${layerId}_${i}`] = firstFeature.attributes[i];
+                }
+            }
+            return newAttributes;
+        }
+
+        async function handleConfidentialOwner(attributes, geometry) {
+            view.goTo({
+                target: geometry,
+                zoom: 18,
+                duration: 1000,
+                easing: "ease-in-out"
+            });
+            const popupContent = `Address: <b>**Confidential**</b><br>Parcel: <b>**Confidential**</b>`;
+            view.popup.open({
+                title: "Selected Address: ",
+                content: popupContent,
+                location: geometry,
+            });
+            const newAttributes = await queryLayersByLocation(geometry);
+            Object.assign(attributes, newAttributes);
+            const manualEntry = {
+                "FULL_ADDRESS": "**Confidential**",
+                "PARCEL_ID": "**Confidential**",
+            }
+            Object.assign(attributes, manualEntry);
+            sendParentMessage("clear", null);
+            console.log("Sending selected address to wizard: ", attributes);
+            sendParentMessage("update", attributes);
+        }
+
+        async function handleValidSelection(attributes, geometry) {
+            if (geometry.centroid) {
+                geometry = geometry.centroid;
+            }
+            view.goTo({
+                target: geometry,
+                zoom: 18,
+                duration: 1000,
+                easing: "ease-in-out"
+            });
+            const popupContent = `Address: <b>${attributes[addressLayerAddressAttrName]}</b><br>Parcel: <b>${attributes[addressLayerAPNAttrName]}</b>`;
+            view.popup.open({
+                title: "Selected Address: ",
+                content: popupContent,
+                location: geometry,
+            });
+            const newAttributes = await queryLayersByLocation(geometry);
+            Object.assign(attributes, newAttributes);
+            console.log("Sending selected address to wizard: ", attributes);
+            sendParentMessage("update", attributes);
+        }
+        function forcePopupExpansion() {
+    setTimeout(() => {
+        const popup = document.querySelector('.esri-popup--is-collapsed');
+        if (popup) {
+            popup.classList.remove('esri-popup--is-collapsed');
+            popup.classList.add('esri-popup--is-collapsible');
+            
+            const button = popup.querySelector('.esri-popup__header-container--button');
+            if (button) {
+                button.setAttribute('aria-expanded', 'true');
+                button.click(); // Trigger click to open the popup content
+            }
+        }
+    }, 500);  // Delay to ensure the popup has been initialized
+}
+        function handleInvalidSelection(geometry) {
+            view.popup.open({
+                title: "Invalid Location",
+                content: "Please select a valid location.",
+                location: geometry,
+            });
+            sendParentMessage("clear", null);
+        }
+
+        async function handleValidParcelSelection(parcelAttributes, geometry) {
+            var attributes = {};
+            attributes[addressLayerAPNAttrName] = parcelAttributes[parcelLayerAPNAttrName];
+            attributes[addressLayerAddressAttrName] = "There are no addresses associated with this parcel.";
+            const newAttributes = await queryLayersByLocation(geometry);
+            Object.assign(attributes, newAttributes);
+
+            view.goTo({
+                target: geometry,
+                zoom: 18,
+                duration: 1000,
+                easing: "ease-in-out"
+            });
+            const popupContent = `Address: <b>${attributes[addressLayerAddressAttrName]}</b><br>Parcel: <b>${attributes[addressLayerAPNAttrName]}</b>`;
+            view.popup.open({
+                title: "Selected Address: ",
+                content: popupContent,
+                location: geometry,
+            });
+            sendParentMessage("update", attributes);
+        }
+
+        function sendParentMessage(action, data) {
+            console.log(`Sending command to wizard: ${action}`);
+            const message = {
+                from: "map",
+                action: action,
+                data: data
+            }
+            window.parent.postMessage(message, "*");
+        }
+    });
+</script>
+<script>
+    // Check for mobile devices and force popup to always expand
+    if (window.innerWidth <= 768) {
+        console.log("GQBGB Mobile device detected, expanding popup");
+
+        // Use setTimeout to delay execution in case the popup takes time to load
+        setTimeout(() => {
+            const popup = document.querySelector('.esri-popup--is-collapsed');
+            console.log("GQBGB Popup element found:", popup);
+
+            if (popup) {
+                console.log("popup found, expanding it");
+                popup.classList.remove('esri-popup--is-collapsed');
+                popup.classList.add('esri-popup--is-collapsible');
+
+                // Optionally, simulate the opening of the popup
+                const button = popup.querySelector('.esri-popup__header-container--button');
+                if (button) {
+                    button.setAttribute('aria-expanded', 'true');
+                    // Trigger click to open the popup content
+                    button.click();
+                }
+            }
+        }, 500);  // 500ms delay to ensure the popup has time to load
+    } else {
+        console.log("GQBGB Not a mobile device, no action taken");
+    }
+</script>
+
+<style>
+    /* SELECT ADDRESS POPUP BUTTON */
+    .esri-popup__content{
+        display: flex !important;
+    }
+    .esri-popup__action:not([title="Zoom to"]) {
+        background-color: #0079c1;
+        color: white;
+        cursor: pointer;
+        padding: 8px 15px;
+        margin: 5px;
+        border: none;
+        border-radius: 4px;
+        box-shadow: 0px 1px 1px 0px rgba(0, 0, 0, 0.5);
+        font-size: 1em;
+        font-weight: bold;
+        text-transform: uppercase;
+        transition: background-color 0.3s, transform 0.2s;
+    }
+
+    .esri-popup__action:not([title="Zoom to"]):hover {
+        background-color: #005f8a;
+        transform: scale(1.05);
+    }
+
+    .esri-popup__action:not([title="Zoom to"]):active {
+        background-color: #004d6f;
+        transform: scale(0.95);
+    }
+    ul.esri-menu__list.esri-search__suggestions-list.esri-search__suggestions-list--current-location li:first-child{
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+    }
+    /* .esri-ui-corner{
+        transform: scale(1.4);
+        margin-right: 320px;
+        margin-top: 2%;
+    } */
+    .esri-component.esri-search.esri-widget{
+        border: 2px solid #3a3a3a;
+        border-radius: 5px;
+    }
+    .esri-ui-inner-container.esri-ui-corner-container {
+    width: 75%;
+    height: 100px;
+    min-width: 275px;
+    gap: 4px;;
+}
+@media screen and (max-width: 768px) {
+    /* Target the specific collapsed popup */
+    .esri-popup--is-collapsed {
+        display: flex !important; /* Make sure the content is always visible */
+    }
+}
+@media screen and (max-width: 399px) {
+    .esri-component.esri-zoom.esri-widget {
+        margin-top: 40px;
+    }
+
+    .esri-ui-top-right.esri-ui-corner {
+        margin-right: 25px;
+    }
+    
+}
+
+</style>
