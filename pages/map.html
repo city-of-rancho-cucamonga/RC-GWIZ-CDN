@@ -39,20 +39,6 @@
 			title: "Address Layer",
 			url: "https://gis.cityofrc.us/arcgis/rest/services/Accela/InternalBasemap/MapServer/0",
 			outFields: ["*"],
-			minScale: 10000,
-			renderer: {
-				type: "simple",
-				symbol: {
-					type: "simple-marker",
-					style: "circle",
-					color: [0, 120, 200, 0.6],
-					size: 8,
-					outline: {
-						color: [255, 255, 255, 1],
-						width: 1
-					}
-				}
-			},
 			labelingInfo: [{
 				labelExpressionInfo: {
 					expression: "$feature.LABEL"
