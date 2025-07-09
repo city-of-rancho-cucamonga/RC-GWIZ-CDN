@@ -340,6 +340,8 @@
                 duration: 1000,
                 easing: "ease-in-out"
             });
+            attributes["ADDRESS"] = attributes["Label"];
+            attributes["VHFSZ"] = attributes["VHFSZ"];
             const popupContent = `Address: <b>${attributes[addressLayerAddressAttrName]}</b><br>Parcel: <b>${attributes[addressLayerAPNAttrName]}</b>`;
             view.popup.open({
                 title: "Selected Address: ",
