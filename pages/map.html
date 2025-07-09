@@ -341,7 +341,19 @@
                 easing: "ease-in-out"
             });
             attributes["ADDRESS"] = attributes["Label"];
-            attributes["VHFSZ"] = attributes["VHFSZ"];
+			
+            const parcelResult = await parcelLayer.queryFeatures({
+                geometry: geometry,
+                spatialRelationship: "intersects",
+                outFields: ["APN", "VHFSZ"],
+                returnGeometry: false
+            });
+
+            if (parcelResult.features.length > 0) {
+                const parcelAttrs = parcelResult.features[0].attributes;
+                attributes["VHFSZ"] = parcelAttrs["VHFSZ"];
+            }
+			
             const popupContent = `Address: <b>${attributes[addressLayerAddressAttrName]}</b><br>Parcel: <b>${attributes[addressLayerAPNAttrName]}</b>`;
             view.popup.open({
                 title: "Selected Address: ",
